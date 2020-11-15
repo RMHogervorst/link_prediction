@@ -15,3 +15,4 @@ After that, I try to predict links, which is hard!
 
 See [tidymodels_link_prediction](tidymodels_link_prediction.md)
 
+[![license](https://img.shields.io/badge/license-MIT-lightgrey.svg)](http://choosealicense.com/)
