@@ -308,6 +308,7 @@ cat(paste0("There are ",nrow(pos_examples), " positive examples and ",
 ## Combining positive and negative examples
 ```{r}
 # make positive 1 and negative 0
+# We should probably remove some duplciates here. because the graph is undirected a link between A-B and B-A is identical. and we can remove one of those. 
 trainingset <- 
   bind_rows(
     pos_examples %>% mutate(target=1),
