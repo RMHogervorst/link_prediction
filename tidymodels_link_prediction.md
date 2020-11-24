@@ -47,21 +47,24 @@ library(tidymodels)
 Load data
 
 ``` r
-enriched_trainingset <- readr::read_rds(file="data/enriched_trainingset.Rds")
+enriched_trainingset <- readr::read_rds(file="data/enriched_trainingset.Rds") %>% 
+  mutate(target=as.factor(target))
 head(enriched_trainingset)
 ```
 
-    ## # A tibble: 6 x 13
-    ##    from    to target degree betweenness pg_rank    eigen br_score degree_to
-    ##   <dbl> <dbl>  <dbl>  <dbl>       <dbl>   <dbl>    <dbl>    <dbl>     <dbl>
-    ## 1   285   546      1      1           0 9.55e-4 2.01e- 5 0.000150         2
-    ## 2   151   614      1      4          76 3.08e-3 5.10e-11 0.000364         2
-    ## 3     8   584      1      1           0 8.62e-4 1.20e- 5 0.000168         3
-    ## 4    68   435      1      1           0 9.96e-4 2.90e- 8 0.000120         1
-    ## 5   345   378      1      1           0 9.01e-4 5.72e- 4 0.000183         1
-    ## 6   223   366      1      1           0 8.34e-4 6.47e- 8 0.000167         2
-    ## # … with 4 more variables: betweenness_to <dbl>, pg_rank_to <dbl>,
-    ## #   eigen_to <dbl>, br_score_to <dbl>
+    ## # A tibble: 6 x 20
+    ##    from    to target commonneighbors… commonneighbors… degree betweenness
+    ##   <dbl> <dbl> <fct>             <int>            <int>  <dbl>       <dbl>
+    ## 1   285   546 1                     0                0      1           0
+    ## 2   151   614 1                     0                0      4          76
+    ## 3     8   584 1                     0                0      1           0
+    ## 4    68   435 1                     0                0      1           0
+    ## 5   345   378 1                     0                0      1           0
+    ## 6   223   366 1                     0                0      1           0
+    ## # … with 13 more variables: pg_rank <dbl>, eigen <dbl>, closeness <dbl>,
+    ## #   br_score <dbl>, coreness <dbl>, degree_to <dbl>, betweenness_to <dbl>,
+    ## #   pg_rank_to <dbl>, eigen_to <dbl>, closeness_to <dbl>, br_score_to <dbl>,
+    ## #   coreness_to <dbl>, unique_neighbors <dbl>
 
 THIS IS WHERE I WOULD SPEND A LOT OF TIME FIGURING OUT THE RELATIONSHIPS
 BETWEEN OUTCOME AND FEATURES. LOTS OF PLOTS, LOTS OF CORRELATIONS ETC.
@@ -94,13 +97,10 @@ ntwrk_recipe <-
   recipe(enriched_trainingset,formula = target~.) %>% 
   recipes::update_role(to, new_role = "other") %>% 
   recipes::update_role(from, new_role = "other") %>% 
-  step_rm(starts_with("betweenness")) %>% 
-  step_rm(starts_with("eigen")) %>% 
-  step_rm(starts_with("br_score")) %>% 
   step_interact(terms = ~ pg_rank:pg_rank_to) %>% 
   step_interact(terms = ~ degree:degree_to) %>% 
-  #step_corr(all_numeric()) %>% 
-  #step_nzv(all_predictors()) %>% 
+  step_corr(all_numeric()) %>% 
+  step_nzv(all_predictors()) %>% 
   step_normalize(all_predictors(), -all_nominal()) %>% 
   step_mutate(target = as.factor(target))
 ```
@@ -162,11 +162,11 @@ ntwrk_res %>%
   geom_point() + 
   geom_line() + 
   labs(
-    title="Penalty should be lower than 0.01",
+    title="sudden dropoff at ~0.0304",
     y= "Area under the ROC Curve"
     ) +
   scale_x_log10(labels = scales::label_number())+
-  geom_vline(xintercept = 0.01, color="tomato3")
+  geom_vline(xintercept = 0.0304, color="tomato3")
 ```
 
 ![](tidymodels_link_prediction_files/figure-gfm/unnamed-chunk-8-1.png)<!-- -->
@@ -201,13 +201,13 @@ replacing the value
 
 ``` r
 ### replace model with parameters set (still untrained)
-top_models[1,]
+top_models[2,]
 ```
 
     ## # A tibble: 1 x 7
-    ##   penalty .metric .estimator  mean     n std_err .config
-    ##     <dbl> <chr>   <chr>      <dbl> <int>   <dbl> <chr>  
-    ## 1  0.0001 roc_auc binary     0.632     1      NA Model01
+    ##    penalty .metric .estimator  mean     n std_err .config
+    ##      <dbl> <chr>   <chr>      <dbl> <int>   <dbl> <chr>  
+    ## 1 0.000127 roc_auc binary     0.812     1      NA Model02
 
 ``` r
 ntwrk_spec_1 <- 
@@ -235,7 +235,7 @@ ntwrk_fit %>%
   collect_predictions() %>% 
   roc_curve(target, .pred_0) %>% 
   autoplot()+ 
-  labs("Well, at least the test performance is equivalent to the training score")
+  labs(subtitle="Well, at least the test performance \nis equivalent to the training score")
 ```
 
 ![](tidymodels_link_prediction_files/figure-gfm/unnamed-chunk-11-1.png)<!-- -->
@@ -258,8 +258,8 @@ ntwrk_fit$.predictions[[1]] %>%
     ## # Groups:   target [2]
     ##   target .pred_class count avg_prob1 avg_prob0
     ##   <fct>  <fct>       <int>     <dbl>     <dbl>
-    ## 1 0      0            8588    0.0455     0.955
-    ## 2 1      0             392    0.0471     0.953
+    ## 1 0      0            8595    0.0436     0.956
+    ## 2 1      0             383    0.0978     0.902
 
 This is problematic.
 
@@ -342,9 +342,9 @@ ntwrk_res2
     ## # A tibble: 3 x 5
     ##   splits           id    .metrics          .notes          .predictions         
     ##   <list>           <chr> <list>            <list>          <list>               
-    ## 1 <split [18K/9K]> Fold1 <tibble [15 × 6]> <tibble [0 × 1… <tibble [134,715 × 7…
-    ## 2 <split [18K/9K]> Fold2 <tibble [15 × 6]> <tibble [0 × 1… <tibble [134,715 × 7…
-    ## 3 <split [18K/9K]> Fold3 <tibble [15 × 6]> <tibble [0 × 1… <tibble [134,715 × 7…
+    ## 1 <split [18K/9K]> Fold1 <tibble [15 × 6]> <tibble [0 × 1… <tibble [134,670 × 7…
+    ## 2 <split [18K/9K]> Fold2 <tibble [15 × 6]> <tibble [0 × 1… <tibble [134,670 × 7…
+    ## 3 <split [18K/9K]> Fold3 <tibble [15 × 6]> <tibble [0 × 1… <tibble [134,670 × 7…
 
 Visualise results
 
@@ -371,11 +371,11 @@ show_best(ntwrk_res2, "roc_auc")
     ## # A tibble: 5 x 8
     ##    penalty mixture .metric .estimator  mean     n std_err .config
     ##      <dbl>   <dbl> <chr>   <chr>      <dbl> <int>   <dbl> <chr>  
-    ## 1 2.21e- 1   0.143 roc_auc binary     0.706     3 0.00770 Model03
-    ## 2 1.47e- 2   0.976 roc_auc binary     0.705     3 0.00771 Model15
-    ## 3 8.24e- 2   0.701 roc_auc binary     0.700     3 0.00396 Model11
-    ## 4 2.41e- 3   0.606 roc_auc binary     0.693     3 0.00632 Model10
-    ## 5 4.16e-10   0.927 roc_auc binary     0.688     3 0.00586 Model14
+    ## 1 2.39e- 8   0.138 roc_auc binary     0.799     3 0.00369 Model03
+    ## 2 3.93e- 6   1.00  roc_auc binary     0.799     3 0.00370 Model15
+    ## 3 6.93e- 5   0.318 roc_auc binary     0.799     3 0.00360 Model05
+    ## 4 1.37e-10   0.718 roc_auc binary     0.799     3 0.00358 Model11
+    ## 5 4.01e- 9   0.433 roc_auc binary     0.799     3 0.00363 Model07
 
 ``` r
 best_auc <- select_best(ntwrk_res2, "roc_auc")
@@ -409,8 +409,8 @@ final_workflow
     ## Logistic Regression Model Specification (classification)
     ## 
     ## Main Arguments:
-    ##   penalty = 0.220553905126207
-    ##   mixture = 0.143439286357413
+    ##   penalty = 2.39261965528632e-08
+    ##   mixture = 0.137921167320261
     ## 
     ## Computational engine: glmnet
 
@@ -442,8 +442,10 @@ collect_metrics(final_res)
     ## # A tibble: 2 x 3
     ##   .metric  .estimator .estimate
     ##   <chr>    <chr>          <dbl>
-    ## 1 accuracy binary         0.956
-    ## 2 roc_auc  binary         0.714
+    ## 1 accuracy binary         0.833
+    ## 2 roc_auc  binary         0.812
+
+At least we are predicting 1s here.
 
 ``` r
 final_res$.predictions[[1]] %>% 
@@ -457,16 +459,217 @@ final_res$.predictions[[1]] %>%
 
     ## `summarise()` regrouping output by 'target' (override with `.groups` argument)
 
-    ## # A tibble: 2 x 5
+    ## # A tibble: 4 x 5
     ## # Groups:   target [2]
     ##   target .pred_class count avg_prob1 avg_prob0
     ##   <fct>  <fct>       <int>     <dbl>     <dbl>
-    ## 1 0      0            8588     0.395     0.605
-    ## 2 1      0             392     0.409     0.591
+    ## 1 0      0            7255     0.238     0.762
+    ## 2 0      1            1340     0.646     0.354
+    ## 3 1      0             158     0.347     0.653
+    ## 4 1      1             225     0.698     0.302
 
-hahahaah even worse!
+``` r
+final_res$.predictions[[1]] %>% 
+  group_by(target, .pred_class) %>% 
+  summarize(count = n()) %>% 
+  ungroup() %>% 
+  group_by(.pred_class) %>% 
+  mutate(
+    total = sum(count),
+    perc = count/total,
+    truth=ifelse(target==1,"link", "no_link"),
+    prediction = ifelse(.pred_class ==1, "link","no_link")
+         ) %>% 
+  ungroup() %>% 
+  select(perc, truth, prediction) %>% 
+  pivot_wider(names_from = truth, values_from = perc) %>% 
+  knitr::kable(digits = 3,caption = "contingency table")
+```
 
-I still never predict 1.
+    ## `summarise()` regrouping output by 'target' (override with `.groups` argument)
+
+| prediction | no\_link |  link |
+|:-----------|---------:|------:|
+| no\_link   |    0.979 | 0.021 |
+| link       |    0.856 | 0.144 |
+
+contingency table
+
+When I predicted no link, there was no link in 98% of the time. When I
+predicted a link, there was a link 86% of the cases.
+
+# Let’s try with random forest.
+
+``` r
+rf_recipe <- ntwrk_recipe_undersample 
+
+rf_spec <- 
+  rand_forest(mtry = tune(), min_n = tune(), trees = 1000) %>% 
+  set_mode("classification") %>% 
+  set_engine("ranger",importance="impurity") 
+
+rf_workflow <- 
+  workflow() %>% 
+  add_recipe(rf_recipe) %>% 
+  add_model(rf_spec)
+
+
+set.seed(88708)
+rf_grid <- 
+  grid_max_entropy(
+    mtry(range = c(1,15)),
+    min_n(),
+    size = 20)
+
+rf_tune <-
+  tune_grid(rf_workflow, 
+            resamples = crossvalidation_sets, 
+            grid = rf_grid,
+            control = control_grid(save_pred = TRUE),
+            metrics = metric_set(roc_auc))
+```
+
+So what is the best parameter set?
+
+``` r
+rf_tune %>% 
+  collect_metrics() %>%
+  select(mean, mtry:min_n) %>%
+  pivot_longer(mtry:min_n,
+               values_to = "value",
+               names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(alpha = 0.8, show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(
+    x = NULL, y = "AUC",
+    title="Quite some diversity"
+       )
+```
+
+![](tidymodels_link_prediction_files/figure-gfm/unnamed-chunk-23-1.png)<!-- -->
+
+``` r
+top_models_rf <-
+  rf_tune %>% 
+  show_best("roc_auc", n = 5)
+rf_best <- 
+  rf_tune %>% 
+  collect_metrics() %>% 
+  arrange(mtry) %>% 
+  slice(5)
+
+pred_auc_rf <- 
+  rf_tune %>% 
+  collect_predictions(parameters = rf_best) %>% 
+  roc_curve(target, .pred_0) %>% 
+  mutate(model = "Random forrest")
+autoplot(pred_auc_rf)+ ggtitle("Better performance")
+```
+
+![](tidymodels_link_prediction_files/figure-gfm/unnamed-chunk-24-1.png)<!-- -->
+
+overlay both models
+
+``` r
+bind_rows(
+  pred_auc_rf,
+  pred_auc
+) %>% 
+  ggplot(aes(
+    x = 1 - specificity, 
+    y = sensitivity, 
+    color = model)
+    )+
+  geom_line()+
+  geom_abline(
+    lty = 2, alpha = 0.5,
+    color = "gray50",
+    size = 1.2
+  )+
+  theme_minimal()
+```
+
+![](tidymodels_link_prediction_files/figure-gfm/unnamed-chunk-25-1.png)<!-- -->
+
+``` r
+best_auc_rf <- select_best(rf_tune, "roc_auc")
+final_workflow_rf <- finalize_workflow(
+    rf_workflow,
+    best_auc_rf
+)
+final_res_rf <- last_fit(final_workflow_rf, tr_te_split)
+collect_metrics(final_res_rf)
+```
+
+    ## # A tibble: 2 x 3
+    ##   .metric  .estimator .estimate
+    ##   <chr>    <chr>          <dbl>
+    ## 1 accuracy binary         0.910
+    ## 2 roc_auc  binary         0.910
+
+``` r
+prediction_model2 <- fit(
+  final_res_rf$.workflow[[1]], 
+  enriched_trainingset
+  )
+prediction_model2 %>% 
+  pull_workflow_fit() %>% 
+  vip(geom="point")+
+  ggtitle("Variable importance of Random Forest model")
+```
+
+![](tidymodels_link_prediction_files/figure-gfm/unnamed-chunk-27-1.png)<!-- -->
+
+``` r
+# based on https://community.rstudio.com/t/how-to-use-pdp-partial-in-tidymodels/69735/2
+pdp_data <- function(trained_workflow, variable_of_interest){
+  recipe_ <- 
+    trained_workflow %>% 
+    pull_workflow_preprocessor() 
+  pred_data <- 
+    recipe_ %>% 
+    step_profile(all_predictors(), -!!variable_of_interest, 
+    profile = vars(!!variable_of_interest)
+    ) %>% 
+  prep() %>% 
+  juice()
+  predict(
+    trained_workflow %>% pull_workflow_fit(),
+    new_data=pred_data
+  ) %>% bind_cols(pred_data %>% select(!!variable_of_interest))
+}
+pdp_data(prediction_model2, "commonneighbors_2") %>% 
+  ggplot(aes(y=.pred_class, commonneighbors_2))+
+  geom_path()
+```
+
+![](tidymodels_link_prediction_files/figure-gfm/unnamed-chunk-28-1.png)<!-- -->
+
+``` r
+pdp_data(prediction_model2, "eigen_x_eigen_to") %>% 
+  ggplot(aes(y=.pred_class, eigen_x_eigen_to))+
+  geom_path()
+```
+
+![](tidymodels_link_prediction_files/figure-gfm/unnamed-chunk-28-2.png)<!-- -->
+
+``` r
+pdp_data(prediction_model2, "commonneighbors_1") %>% 
+  ggplot(aes(y=.pred_class, commonneighbors_1))+
+  geom_path()
+```
+
+![](tidymodels_link_prediction_files/figure-gfm/unnamed-chunk-28-3.png)<!-- -->
+
+``` r
+### To use this model in a different setting we have to train it again (like above, or maybe on the entire dataset)
+prediction_model <- fit(final_workflow_rf, training(tr_te_split))
+# this next step doesn't really make sense, because we had this data all the time.
+# 
+predict(prediction_model, testing(tr_te_split))
+```
 
     # NOW WE COULD BRING IT BACK AROUND AND PLOT PREDICTED VALUES
     # https://bgreenwell.github.io/pdp/articles/pdp-classification.html

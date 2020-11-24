@@ -31,7 +31,8 @@ library(tidymodels)
 Load data 
 
 ```{r}
-enriched_trainingset <- readr::read_rds(file="data/enriched_trainingset.Rds")
+enriched_trainingset <- readr::read_rds(file="data/enriched_trainingset.Rds") %>% 
+  mutate(target=as.factor(target))
 head(enriched_trainingset)
 ```
 
@@ -67,13 +68,10 @@ ntwrk_recipe <-
   recipe(enriched_trainingset,formula = target~.) %>% 
   recipes::update_role(to, new_role = "other") %>% 
   recipes::update_role(from, new_role = "other") %>% 
-  step_rm(starts_with("betweenness")) %>% 
-  step_rm(starts_with("eigen")) %>% 
-  step_rm(starts_with("br_score")) %>% 
   step_interact(terms = ~ pg_rank:pg_rank_to) %>% 
   step_interact(terms = ~ degree:degree_to) %>% 
-  #step_corr(all_numeric()) %>% 
-  #step_nzv(all_predictors()) %>% 
+  step_corr(all_numeric()) %>% 
+  step_nzv(all_predictors()) %>% 
   step_normalize(all_predictors(), -all_nominal()) %>% 
   step_mutate(target = as.factor(target))
 ```
@@ -133,11 +131,11 @@ ntwrk_res %>%
   geom_point() + 
   geom_line() + 
   labs(
-    title="Penalty should be lower than 0.01",
+    title="sudden dropoff at ~0.0304",
     y= "Area under the ROC Curve"
     ) +
   scale_x_log10(labels = scales::label_number())+
-  geom_vline(xintercept = 0.01, color="tomato3")
+  geom_vline(xintercept = 0.0304, color="tomato3")
 ```
 What are the best models
 
@@ -167,7 +165,7 @@ Let's use the best performing model and modify the current workflow,
 by replacing the value
 ```{r}
 ### replace model with parameters set (still untrained)
-top_models[1,]
+top_models[2,]
 ntwrk_spec_1 <- 
   logistic_reg(penalty = 0.003562248, mixture = 0.5) %>% 
   set_engine("glmnet")
@@ -194,7 +192,7 @@ ntwrk_fit %>%
   collect_predictions() %>% 
   roc_curve(target, .pred_0) %>% 
   autoplot()+ 
-  labs("Well, at least the test performance is equivalent to the training score")
+  labs(subtitle="Well, at least the test performance \nis equivalent to the training score")
 ```
 
 Unpacking predictions. Soo we always predicted no connection!
@@ -309,7 +307,7 @@ final_workflow %>%
 final_res <- last_fit(final_workflow, tr_te_split)
 collect_metrics(final_res)
 ```
-
+At least we are predicting  1s here.
 ```{r}
 final_res$.predictions[[1]] %>% 
   group_by(target, .pred_class) %>% 
@@ -320,10 +318,187 @@ final_res$.predictions[[1]] %>%
   )
 ```
 
+```{r}
+final_res$.predictions[[1]] %>% 
+  group_by(target, .pred_class) %>% 
+  summarize(count = n()) %>% 
+  ungroup() %>% 
+  group_by(.pred_class) %>% 
+  mutate(
+    total = sum(count),
+    perc = count/total,
+    truth=ifelse(target==1,"link", "no_link"),
+    prediction = ifelse(.pred_class ==1, "link","no_link")
+         ) %>% 
+  ungroup() %>% 
+  select(perc, truth, prediction) %>% 
+  pivot_wider(names_from = truth, values_from = perc) %>% 
+  knitr::kable(digits = 3,caption = "contingency table")
+```
 
-hahahaah even worse!
+When I predicted no link, there was no link in 98% of the time. When I predicted a link, there was a link 86% of the cases.
 
-I still never predict 1.
+
+# Let's try with random forest.
+
+```{r}
+rf_recipe <- ntwrk_recipe_undersample 
+
+rf_spec <- 
+  rand_forest(mtry = tune(), min_n = tune(), trees = 1000) %>% 
+  set_mode("classification") %>% 
+  set_engine("ranger",importance="impurity") 
+
+rf_workflow <- 
+  workflow() %>% 
+  add_recipe(rf_recipe) %>% 
+  add_model(rf_spec)
+
+
+set.seed(88708)
+rf_grid <- 
+  grid_max_entropy(
+    mtry(range = c(1,15)),
+    min_n(),
+    size = 20)
+
+rf_tune <-
+  tune_grid(rf_workflow, 
+            resamples = crossvalidation_sets, 
+            grid = rf_grid,
+            control = control_grid(save_pred = TRUE),
+            metrics = metric_set(roc_auc))
+```
+
+So what is the best parameter set?
+
+
+```{r}
+rf_tune %>% 
+  collect_metrics() %>%
+  select(mean, mtry:min_n) %>%
+  pivot_longer(mtry:min_n,
+               values_to = "value",
+               names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(alpha = 0.8, show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(
+    x = NULL, y = "AUC",
+    title="Quite some diversity"
+       )
+```
+
+```{r}
+top_models_rf <-
+  rf_tune %>% 
+  show_best("roc_auc", n = 5)
+rf_best <- 
+  rf_tune %>% 
+  collect_metrics() %>% 
+  arrange(mtry) %>% 
+  slice(5)
+
+pred_auc_rf <- 
+  rf_tune %>% 
+  collect_predictions(parameters = rf_best) %>% 
+  roc_curve(target, .pred_0) %>% 
+  mutate(model = "Random forrest")
+autoplot(pred_auc_rf)+ ggtitle("Better performance")
+```
+
+
+overlay both models
+
+```{r}
+bind_rows(
+  pred_auc_rf,
+  pred_auc
+) %>% 
+  ggplot(aes(
+    x = 1 - specificity, 
+    y = sensitivity, 
+    color = model)
+    )+
+  geom_line()+
+  geom_abline(
+    lty = 2, alpha = 0.5,
+    color = "gray50",
+    size = 1.2
+  )+
+  theme_minimal()
+```
+
+
+```{r}
+best_auc_rf <- select_best(rf_tune, "roc_auc")
+final_workflow_rf <- finalize_workflow(
+    rf_workflow,
+    best_auc_rf
+)
+final_res_rf <- last_fit(final_workflow_rf, tr_te_split)
+collect_metrics(final_res_rf)
+```
+
+
+```{r}
+prediction_model2 <- fit(
+  final_res_rf$.workflow[[1]], 
+  enriched_trainingset
+  )
+prediction_model2 %>% 
+  pull_workflow_fit() %>% 
+  vip(geom="point")+
+  ggtitle("Variable importance of Random Forest model")
+```
+
+
+
+```{r}
+# based on https://community.rstudio.com/t/how-to-use-pdp-partial-in-tidymodels/69735/2
+pdp_data <- function(trained_workflow, variable_of_interest){
+  recipe_ <- 
+    trained_workflow %>% 
+    pull_workflow_preprocessor() 
+  pred_data <- 
+    recipe_ %>% 
+    step_profile(all_predictors(), -!!variable_of_interest, 
+    profile = vars(!!variable_of_interest)
+    ) %>% 
+  prep() %>% 
+  juice()
+  predict(
+    trained_workflow %>% pull_workflow_fit(),
+    new_data=pred_data
+  ) %>% bind_cols(pred_data %>% select(!!variable_of_interest))
+}
+pdp_data(prediction_model2, "commonneighbors_2") %>% 
+  ggplot(aes(y=.pred_class, commonneighbors_2))+
+  geom_path()
+
+pdp_data(prediction_model2, "eigen_x_eigen_to") %>% 
+  ggplot(aes(y=.pred_class, eigen_x_eigen_to))+
+  geom_path()
+
+pdp_data(prediction_model2, "commonneighbors_1") %>% 
+  ggplot(aes(y=.pred_class, commonneighbors_1))+
+  geom_path()
+
+```
+
+
+
+
+```{r, eval=FALSE}
+### To use this model in a different setting we have to train it again (like above, or maybe on the entire dataset)
+prediction_model <- fit(final_workflow_rf, training(tr_te_split))
+# this next step doesn't really make sense, because we had this data all the time.
+# 
+predict(prediction_model, testing(tr_te_split))
+```
+
+
 
 ```
 # NOW WE COULD BRING IT BACK AROUND AND PLOT PREDICTED VALUES

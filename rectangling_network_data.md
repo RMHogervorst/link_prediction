@@ -392,7 +392,7 @@ system.time(
     ## Found 1617 possible links
 
     ##    user  system elapsed 
-    ##  16.565   0.496  19.253
+    ##  17.165   0.536  24.817
 
 This leads to many more negative examples than positive examples:
 
@@ -411,10 +411,15 @@ cat(paste0("There are ",nrow(pos_examples), " positive examples and ",
 
 ``` r
 # make positive 1 and negative 0
+# We should probably remove some duplciates here. because the graph is undirected a link between A-B and B-A is identical. and we can remove one of those. 
 trainingset <- 
   bind_rows(
-    pos_examples %>% mutate(target=1),
-    neg_examples[,c("from","to")] %>% mutate(target=0)
+    pos_examples %>% 
+      filter(from != to) %>% 
+      mutate(target=1),
+    neg_examples[,c("from","to")] %>%
+      filter(from != to) %>% 
+      mutate(target=0)
 )
 ```
 
@@ -434,6 +439,82 @@ stopifnot(with_graph(emptier_graph, graph_is_connected()))
 
 Calculate some features about every node in the graph.
 
+communities closeness N-common neighbors. unique neighbors
+
+``` r
+nodes_igraph <- igraph::V(emptier_graph) # should work the same, but isn't true.
+# it seems igraph uses different node ids so we have to work around this...
+ids <- names(nodes_igraph) %>% gsub(".+\\(([0-9]+)\\)$","\\1",x=.) %>% as.numeric()
+
+neighbors <- igraph::neighborhood(emptier_graph,order = 1)
+neighbors_dist2 <- igraph::neighborhood(emptier_graph,order = 2,mindist = 1)
+
+lookup_vertice_id <- function(empty_graph_id){
+  which(ids == empty_graph_id)
+}
+# 285   546
+# 151 614
+# 8 584
+n_common_neighbors <- function(from, to){
+  stopifnot(from != to) # I know myself, and protect against me
+  from_id <- lookup_vertice_id(as.integer(from))
+  from_nb <- names(neighbors[[from_id]])
+  from_itself <- names(nodes_igraph[[from_id]])
+  from_nbs <- setdiff(from_nb, from_itself)
+  to_id <- lookup_vertice_id(as.integer(to))
+  to_nb <- names(neighbors[[to_id]])
+  to_itself <- names(nodes_igraph[[to_id]])
+  to_nbs <- base::setdiff(to_nb, to_itself)
+  result <- base::intersect(from_nbs, to_nbs)
+    if(is.null(result)){
+      0
+    }else{
+      length(result)    
+    }
+}
+n2_common_neighbors <- function(from, to){
+  stopifnot(from != to) # I know myself, and protect against me
+  from_id <- lookup_vertice_id(as.integer(from))
+  from_nb <- names(neighbors_dist2[[from_id]])
+  from_itself <- names(nodes_igraph[[from_id]])
+  from_nbs <- setdiff(from_nb, from_itself)
+  to_id <- lookup_vertice_id(as.integer(to))
+  to_nb <- names(neighbors_dist2[[to_id]])
+  to_itself <- names(nodes_igraph[[to_id]])
+  to_nbs <- base::setdiff(to_nb, to_itself)
+  result <- base::intersect(from_nbs, to_nbs)
+  if(is.null(result)){
+    0
+  }else{
+    length(result)    
+  }
+}
+```
+
+``` r
+# superslow, because it is not vectorized.
+get_common_neighbors <- function(dataframe){
+  n1 <- rep(NA_integer_,nrow(trainingset))
+n2 <- rep(NA_integer_,nrow(trainingset))
+for (i in 1:nrow(trainingset)) {
+  n1[[i]] <- n_common_neighbors(
+    trainingset$from[[i]], trainingset$to[[i]]
+    )
+  n2[[i]] <- n2_common_neighbors(
+    trainingset$from[[i]], trainingset$to[[i]]
+    )
+}
+  dataframe$commonneighbors_1 = n1
+  dataframe$commonneighbors_2 = n2
+  dataframe
+}
+
+
+trainingset <- 
+  trainingset %>% 
+  get_common_neighbors()
+```
+
 ``` r
 node_features <- 
   emptier_graph %>% 
@@ -441,11 +522,13 @@ node_features <-
   mutate(
     # to be honest, network people would know better what to do here than me.
     # what I do is not random, but it is an educated guess.
-    degree= centrality_degree(normalized=TRUE),
+    degree= centrality_degree(normalized=FALSE),
     betweenness = centrality_betweenness(cutoff = 5,normalized = TRUE),#
     pg_rank = centrality_pagerank(),
     eigen = centrality_eigen(),
-    br_score= node_bridging_score() # takes quite long
+    closeness= centrality_closeness_generalised(0.5),
+    br_score= node_bridging_score(), # takes quite long,
+    coreness = node_coreness()
     ) %>% 
   as_tibble() %>% 
   select(-name)
@@ -461,7 +544,8 @@ the edge. More advanced feature combinations can be made later.
 enriched_trainingset <-
   trainingset %>% 
   left_join(node_features, by=c("from"="id")) %>% 
-  left_join(node_features, by=c("to"="id"), suffix=c("","_to"))
+  left_join(node_features, by=c("to"="id"), suffix=c("","_to")) %>% 
+  mutate(unique_neighbors = degree + degree_to - commonneighbors_1)
 readr::write_rds(enriched_trainingset, file="data/enriched_trainingset.Rds")
 ```
 
@@ -497,7 +581,7 @@ So how would we use that in production setting?
     pages (November 2017). These datasets represent blue verified
     Facebook page networks of different categories. Nodes represent the
     pages and edges are mutual likes among them.” Ah, 2017, when I did
-    not realise how awful the company facebook was. Blessed time…
+    not realize how awful the company facebook was. Blessed time…
 
 ## References
 
